@@ -21,16 +21,16 @@ jobs:
         id: fetch-data
         run: |
           # Fetch personal repos
-          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          curl -H "Authorization: token ${{ secrets.PAT }}" \
                -H "Accept: application/vnd.github.v3+json" \
                "https://api.github.com/user/repos?per_page=100" > personal_repos.json
 
           # Fetch organizations
-          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          curl -H "Authorization: token ${{ secrets.PAT }}" \
                -H "Accept: application/vnd.github.v3+json" \
                "https://api.github.com/user/orgs" > orgs.json || echo "[]"
 
-          # Extract org names (default to empty if none)
+          # Extract org names (empty string if none)
           echo "ORGS=$(jq -r '.[].login' orgs.json || echo '')" >> $GITHUB_ENV
 
       - name: Get repos from orgs
@@ -39,18 +39,13 @@ jobs:
           echo "Fetching org repos..."
           if [ -n "${{ env.ORGS }}" ]; then
             for org in ${{ env.ORGS }}; do
-              curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+              curl -H "Authorization: token ${{ secrets.PAT }}" \
                    -H "Accept: application/vnd.github.v3+json" \
                    "https://api.github.com/orgs/$org/repos?per_page=100" > "repo_data/$org.json" || echo "[]"
             done
-          else
-            echo "No orgs found, skipping org repo fetch."
-          fi
-
-          # Combine personal repos with org repos (if any)
-          if ls repo_data/*.json >/dev/null 2>&1; then
             jq -s '[.[][], .[][]]' personal_repos.json repo_data/*.json > all_repos.json
           else
+            echo "No orgs found, using only personal repos."
             cp personal_repos.json all_repos.json
           fi
 
@@ -66,7 +61,7 @@ jobs:
             repo_name=$(basename "$repo" .git)
             owner=$(echo "$repo" | sed 's|https://github.com/||' | cut -d'/' -f1)
             echo "Checking $repo_name for recent pushes..."
-            commit_check=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            commit_check=$(curl -s -H "Authorization: token ${{ secrets.PAT }}" \
                                 -H "Accept: application/vnd.github.v3+json" \
                                 "https://api.github.com/repos/$owner/$repo_name/commits?author=${{ github.actor }}&since=$since&per_page=1")
             if echo "$commit_check" | grep -q '"sha"'; then
