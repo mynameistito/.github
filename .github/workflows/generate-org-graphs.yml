@@ -1,9 +1,12 @@
-name: Generate Commit Graphs for All Contributed Repos
+name: Generate Commit Graphs for Repos I Pushed To
 
 on:
-  schedule:
-    - cron: '0 0 * * *' # Runs daily at midnight UTC
-  workflow_dispatch: # Allows manual triggering
+    push:
+        branches:
+        - main # Change this to your default branch if different
+    schedule:
+    - cron: '0 0 */2 * *' # Runs every 48 hours at midnight UTC
+    workflow_dispatch: # Allows manual triggering
 
 jobs:
   generate-graphs:
@@ -33,7 +36,7 @@ jobs:
           # Extract org names
           echo "ORGS=$(jq -r '.[].login' orgs.json)" >> $GITHUB_ENV
 
-      - name: Get repos from orgs and filter by contribution
+      - name: Get repos from orgs
         run: |
           mkdir -p repo_data
           echo "Fetching org repos..."
@@ -46,22 +49,34 @@ jobs:
           # Combine personal and org repos
           jq -s '[.[][], .[][]]' personal_repos.json repo_data/*.json > all_repos.json
 
-          # Filter repos by contribution (simplified: assumes access means contribution)
+          # Get all repo URLs
           echo "REPOS=$(jq -r '.[].clone_url' all_repos.json)" >> $GITHUB_ENV
 
-      - name: Generate graphs for each repo
+      - name: Check for recent pushes and generate graphs
         run: |
           mkdir -p graphs
+          # Calculate time 48 hours ago (for comparison)
+          since=$(date -u -Iseconds -d "48 hours ago")
           for repo in ${{ env.REPOS }}; do
             repo_name=$(basename "$repo" .git)
-            echo "Processing $repo_name..."
-            if git clone "$repo" "temp-$repo_name" 2>/dev/null; then
-              cd "temp-$repo_name"
-              git log --graph --pretty=format:'%h' --no-decorate > "../graphs/$repo_name.txt"
-              cd ..
-              rm -rf "temp-$repo_name"
+            owner=$(echo "$repo" | sed 's|https://github.com/||' | cut -d'/' -f1)
+            echo "Checking $repo_name for recent pushes..."
+            # Check commits by you since 48 hours ago
+            commit_check=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                                 -H "Accept: application/vnd.github.v3+json" \
+                                 "https://api.github.com/repos/$owner/$repo_name/commits?author=${{ github.actor }}&since=$since&per_page=1")
+            if echo "$commit_check" | grep -q '"sha"'; then
+              echo "Recent push detected in $repo_name, generating graph..."
+              if git clone "$repo" "temp-$repo_name" 2>/dev/null; then
+                cd "temp-$repo_name"
+                git log --graph --pretty=format:'%h' --no-decorate > "../graphs/$repo_name.txt"
+                cd ..
+                rm -rf "temp-$repo_name"
+              else
+                echo "Skipping $repo_name (no clone access)"
+              fi
             else
-              echo "Skipping $repo_name (no access or empty)"
+              echo "No recent pushes by ${{ github.actor }} in $repo_name, skipping..."
             fi
           done
 
@@ -70,3 +85,9 @@ jobs:
         with:
           name: commit-graphs
           path: graphs/*.txt
+
+      - name: Commit graphs to repo
+        run: |
+          git add graphs/*.txt
+          git commit -m "Update commit graphs for repos with recent pushes" || echo "No changes to commit"
+          git push
