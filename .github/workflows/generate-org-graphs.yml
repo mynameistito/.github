@@ -43,12 +43,16 @@ jobs:
                    -H "Accept: application/vnd.github.v3+json" \
                    "https://api.github.com/orgs/$org/repos?per_page=100" > "repo_data/$org.json" || echo "[]"
             done
-            jq -s '[.[][], .[][]]' personal_repos.json repo_data/*.json > all_repos.json
+            # Only combine if org files exist
+            if ls repo_data/*.json >/dev/null 2>&1; then
+              jq -s '[.[][], .[][]]' personal_repos.json repo_data/*.json > all_repos.json
+            else
+              cp personal_repos.json all_repos.json
+            fi
           else
             echo "No orgs found, using only personal repos."
             cp personal_repos.json all_repos.json
           fi
-
           # Get all repo URLs
           echo "REPOS=$(jq -r '.[].clone_url' all_repos.json)" >> $GITHUB_ENV
 
