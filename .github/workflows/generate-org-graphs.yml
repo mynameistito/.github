@@ -101,4 +101,4 @@ jobs:
             git push
           else
             echo "No graphs generated, nothing to commit."
-          fi
+          fis
