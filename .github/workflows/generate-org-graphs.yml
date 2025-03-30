@@ -1,0 +1,72 @@
+name: Generate Commit Graphs for All Contributed Repos
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
+  workflow_dispatch: # Allows manual triggering
+
+jobs:
+  generate-graphs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout .github repo
+        uses: actions/checkout@v4
+
+      - name: Set up Git
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+
+      - name: Get user repos and orgs
+        id: fetch-data
+        run: |
+          # Fetch personal repos
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+               -H "Accept: application/vnd.github.v3+json" \
+               "https://api.github.com/user/repos?per_page=100" > personal_repos.json
+
+          # Fetch organizations
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+               -H "Accept: application/vnd.github.v3+json" \
+               "https://api.github.com/user/orgs" > orgs.json
+
+          # Extract org names
+          echo "ORGS=$(jq -r '.[].login' orgs.json)" >> $GITHUB_ENV
+
+      - name: Get repos from orgs and filter by contribution
+        run: |
+          mkdir -p repo_data
+          echo "Fetching org repos..."
+          for org in ${{ env.ORGS }}; do
+            curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+                 -H "Accept: application/vnd.github.v3+json" \
+                 "https://api.github.com/orgs/$org/repos?per_page=100" > "repo_data/$org.json"
+          done
+
+          # Combine personal and org repos
+          jq -s '[.[][], .[][]]' personal_repos.json repo_data/*.json > all_repos.json
+
+          # Filter repos by contribution (simplified: assumes access means contribution)
+          echo "REPOS=$(jq -r '.[].clone_url' all_repos.json)" >> $GITHUB_ENV
+
+      - name: Generate graphs for each repo
+        run: |
+          mkdir -p graphs
+          for repo in ${{ env.REPOS }}; do
+            repo_name=$(basename "$repo" .git)
+            echo "Processing $repo_name..."
+            if git clone "$repo" "temp-$repo_name" 2>/dev/null; then
+              cd "temp-$repo_name"
+              git log --graph --pretty=format:'%h' --no-decorate > "../graphs/$repo_name.txt"
+              cd ..
+              rm -rf "temp-$repo_name"
+            else
+              echo "Skipping $repo_name (no access or empty)"
+            fi
+          done
+
+      - name: Upload graphs as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: commit-graphs
+          path: graphs/*.txt
